@@ -13,3 +13,7 @@ out/
 .model_dl.log
 .smoke.log
 .sweep*.log
+
+# batch/gsm8k per-run dumps
+batchcheck_*.json
+gsm8k_*_mns*.json
