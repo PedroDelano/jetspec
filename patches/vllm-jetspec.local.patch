@@ -1,0 +1,154 @@
+diff --git a/examples/offline_inference/dflash_profiling.py b/examples/offline_inference/dflash_profiling.py
+index b551760c5d8..dfad6ee7861 100644
+--- a/examples/offline_inference/dflash_profiling.py
++++ b/examples/offline_inference/dflash_profiling.py
+@@ -1362,6 +1362,11 @@ def run_native_profile(
+         profiler_config=profiler_config,
+         disable_log_stats=False,
+     )
++    # sm_120 (Blackwell) + nvcc 12.1: the auto-selected FlashInfer CUTLASS MoE JIT-compiles
++    # for sm_120 via nvcc, which 12.1 cannot target (needs >=12.9) -> RuntimeError.
++    # Force the Triton fused-MoE backend (Triton JIT via ptxas, no nvcc). Explicit, logged
++    # kernel choice; decoding stays lossless. Override with JETSPEC_MOE_BACKEND.
++    llm_kwargs["moe_backend"] = os.environ.get("JETSPEC_MOE_BACKEND", "triton")
+     if args.enable_expert_parallel:
+         llm_kwargs["enable_expert_parallel"] = True
+     if args.disable_cascade_attn:
+diff --git a/examples/offline_inference/jetspec_profiling_math500_tree_budget_bsz_sweep.sh b/examples/offline_inference/jetspec_profiling_math500_tree_budget_bsz_sweep.sh
+index e7e86c6c862..88db399bd69 100755
+--- a/examples/offline_inference/jetspec_profiling_math500_tree_budget_bsz_sweep.sh
++++ b/examples/offline_inference/jetspec_profiling_math500_tree_budget_bsz_sweep.sh
+@@ -26,7 +26,10 @@ prepend_ld_path() {
+     export LD_LIBRARY_PATH="${path}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+   fi
+ }
+-prepend_ld_path "${CUDA_HOME:-}/lib64"
++# JETSPEC-REPRO: do NOT prepend the CUDA toolkit lib64 — torch must use its bundled cu128 runtime
++# libs. CUDA_HOME (12.9 toolkit) is for flashinfer's nvcc/headers (compile) only; prepending its
++# lib64 shadowed torch's libcublas/cudart -> CUBLAS_STATUS_INVALID_VALUE on plain GEMMs.
++# prepend_ld_path "${CUDA_HOME:-}/lib64"
+ prepend_ld_path "/usr/local/cuda/compat/lib.real"
+ prepend_ld_path "/usr/local/cuda/compat/lib"
+ prepend_ld_path "/usr/local/nvidia/lib64"
+diff --git a/vllm/vllm_flash_attn/__init__.py b/vllm/vllm_flash_attn/__init__.py
+index 3507defabae..7dea1f659b8 100644
+--- a/vllm/vllm_flash_attn/__init__.py
++++ b/vllm/vllm_flash_attn/__init__.py
+@@ -1,7 +1,26 @@
+ # SPDX-License-Identifier: Apache-2.0
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ 
+-from vllm.vllm_flash_attn.flash_attn_interface import (
++import importlib.machinery
++import os
++import sys
++import types
++
++# In symlink mode (VLLM_FLASH_ATTN_SRC_DIR), cute/ is a symlink to the real
++# source tree and its files use `flash_attn.cute.*` imports (not rewritten).
++# Register a virtual `flash_attn` package so those imports resolve.
++_cute_dir = os.path.join(os.path.dirname(__file__), "cute")
++if os.path.islink(_cute_dir) and "flash_attn" not in sys.modules:
++    _fa_mod = types.ModuleType("flash_attn")
++    _fa_mod.__path__ = [os.path.dirname(os.path.realpath(_cute_dir))]
++    _fa_mod.__package__ = "flash_attn"
++    _fa_mod.__spec__ = importlib.machinery.ModuleSpec(
++        "flash_attn", None, is_package=True
++    )
++    _fa_mod.__spec__.submodule_search_locations = _fa_mod.__path__
++    sys.modules["flash_attn"] = _fa_mod
++
++from vllm.vllm_flash_attn.flash_attn_interface import (  # noqa: E402
+     FA2_AVAILABLE,
+     FA3_AVAILABLE,
+     fa_version_unsupported_reason,
+diff --git a/vllm/vllm_flash_attn/flash_attn_interface.py b/vllm/vllm_flash_attn/flash_attn_interface.py
+index 9d9a9be2f31..f0150033672 100644
+--- a/vllm/vllm_flash_attn/flash_attn_interface.py
++++ b/vllm/vllm_flash_attn/flash_attn_interface.py
+@@ -200,12 +200,18 @@ def flash_attn_varlen_func(
+     k_descale=None,
+     v_descale=None,
+     num_splits: int = 0,
++    # FA4 Only
++    output_scale=None,
+     # Version selector
+     fa_version: int = DEFAULT_FA_VERSION,
+     s_aux=None,
+     cp_world_size=1,
+     cp_rank=0,
+     cp_tot_seqused_k=None,
++    # FA4 only
++    mask_mod=None,
++    aux_tensors=None,
++    dynamic_causal: "torch.Tensor | None" = None,
+ ):
+     """dropout_p should be set to 0.0 during evaluation
+     Supports multi-query and grouped-query attention (MQA/GQA) by passing in K, V with fewer heads
+@@ -269,6 +275,11 @@ def flash_attn_varlen_func(
+         "seqused_k must be provided if block_table is provided"
+     )
+ 
++    assert output_scale is None or fa_version == 4, (
++        f"Fused FP8 output (output_scale) is only supported by FA4, "
++        f"got fa_version={fa_version}"
++    )
++
+     if softmax_scale is None:
+         softmax_scale = q.shape[-1] ** (-0.5)
+     # custom op does not support non-tuple input
+@@ -297,6 +308,10 @@ def flash_attn_varlen_func(
+             raise NotImplementedError("FA2 does not support s_aux")
+         if num_splits > 1:
+             raise NotImplementedError("FA2 does not support num_splits > 1")
++        if mask_mod is not None:
++            raise NotImplementedError("FA2 does not support mask_mod")
++        if aux_tensors is not None:
++            raise NotImplementedError("FA2 does not support aux_tensors")
+         out, softmax_lse = torch.ops._vllm_fa2_C.varlen_fwd(
+             q,
+             k,
+@@ -325,6 +340,10 @@ def flash_attn_varlen_func(
+         )
+     elif fa_version == 3:
+         assert alibi_slopes is None, "Alibi is not supported in FA3"
++        if mask_mod is not None:
++            raise NotImplementedError("FA3 does not support mask_mod")
++        if aux_tensors is not None:
++            raise NotImplementedError("FA3 does not support aux_tensors")
+         out, softmax_lse, _, _ = torch.ops._vllm_fa3_C.fwd(
+             q,
+             k,
+@@ -366,14 +385,7 @@ def flash_attn_varlen_func(
+         )
+     elif fa_version == 4:
+         assert alibi_slopes is None, "Alibi is not supported in FA4"
+-        # FA4 on SM90 doesn't support paged KV; SM100+ does
+-        from vllm.platforms import current_platform
+ 
+-        if block_table is not None and current_platform.is_device_capability_family(90):
+-            raise NotImplementedError(
+-                "FA4 with paged KV is not supported on SM90 (Hopper). "
+-                "Use FA3 or upgrade to Blackwell (SM100+)."
+-            )
+         from vllm.vllm_flash_attn.cute.interface import _flash_attn_fwd
+ 
+         out, softmax_lse = _flash_attn_fwd(
+@@ -388,12 +400,17 @@ def flash_attn_varlen_func(
+             page_table=block_table,
+             softmax_scale=softmax_scale,
+             causal=causal,
++            dynamic_causal=dynamic_causal,
+             softcap=softcap,
+             window_size_left=real_window_size[0] if real_window_size[0] >= 0 else None,
+             window_size_right=real_window_size[1] if real_window_size[1] >= 0 else None,
+             num_splits=num_splits,
+             return_lse=return_softmax_lse,
+             out=out,
++            learnable_sink=s_aux,
++            mask_mod=mask_mod,
++            aux_tensors=aux_tensors,
++            output_scale=output_scale,
+         )
+     else:
+         raise ValueError(f"Unsupported FA version: {fa_version}")

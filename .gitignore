@@ -1,0 +1,15 @@
+# Cloned upstream repos (huge; patches captured in patches/)
+vllm-jetspec/
+JetSpec/
+explore-skill/
+# Large artifacts / environments
+models/
+.venv/
+.uv-python/
+out/
+.hf-datasets-cache/
+# Logs and scratch
+*.log
+.model_dl.log
+.smoke.log
+.sweep*.log
