@@ -13,6 +13,10 @@ VLLM_BASE_COMMIT="551b3fb39f3a95ff3dc3feca9528ab4c90649316"
 WHEEL="https://wheels.vllm.ai/${VLLM_BASE_COMMIT}/vllm-0.18.2rc1.dev57%2Bg551b3fb39-cp38-abi3-manylinux_2_31_x86_64.whl"
 export UV_LINK_MODE=copy CUDA_HOME=/root/cuda-12.9 PATH="/root/cuda-12.9/bin:$PATH"
 
+# The /workspace NFS intermittently throws "Stale file handle" mid-extraction; retry installs.
+retry() { local n=0; until "$@"; do n=$((n+1)); [ "$n" -ge 5 ] && { echo "FAILED after $n tries: $*"; return 1; }; echo "  retry $n/4: $*"; sleep 5; done; }
+export -f retry
+
 echo "===[1/7] fresh folder: $ROOT"
 rm -rf "$ROOT"; mkdir -p "$ROOT"; cd "$ROOT"
 
@@ -28,13 +32,13 @@ git clone "$FORK_URL" vllm-jetspec
 echo "===[4/7] uv venv + pinned torch (cu128) + precompiled vLLM + locked deps"
 uv venv --python 3.12 .venv
 source .venv/bin/activate
-uv pip install torch==2.10.0 torchvision==0.25.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cu128
+retry uv pip install torch==2.10.0 torchvision==0.25.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cu128
 # build deps must exist BEFORE the editable build (--no-build-isolation runs setup.py against this env)
-uv pip install "setuptools>=77.0.3,<81.0.0" "setuptools-scm>=8" wheel "packaging>=24.2" "cmake>=3.26.1" ninja "jinja2>=3.1.6" regex build
-( cd vllm-jetspec && VLLM_USE_PRECOMPILED=1 uv pip install -e . --no-build-isolation )
+retry uv pip install "setuptools>=77.0.3,<81.0.0" "setuptools-scm>=8" wheel "packaging>=24.2" "cmake>=3.26.1" ninja "jinja2>=3.1.6" regex build
+( cd vllm-jetspec && VLLM_USE_PRECOMPILED=1 retry uv pip install -e . --no-build-isolation )
 # install the rest of the locked set, minus the absolute-path editable vllm line (installed above)
 grep -v 'vllm-jetspec' repo/requirements.lock.txt > /tmp/req.fresh.txt
-uv pip install -r /tmp/req.fresh.txt
+retry uv pip install -r /tmp/req.fresh.txt
 
 echo "===[5/7] verify/repair precompiled .so (NFS extraction can truncate them)"
 python - "$WHEEL" <<'PY'
