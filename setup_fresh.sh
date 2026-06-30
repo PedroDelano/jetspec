@@ -29,6 +29,8 @@ echo "===[4/7] uv venv + pinned torch (cu128) + precompiled vLLM + locked deps"
 uv venv --python 3.12 .venv
 source .venv/bin/activate
 uv pip install torch==2.10.0 torchvision==0.25.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cu128
+# build deps must exist BEFORE the editable build (--no-build-isolation runs setup.py against this env)
+uv pip install "setuptools>=77.0.3,<81.0.0" "setuptools-scm>=8" wheel "packaging>=24.2" "cmake>=3.26.1" ninja "jinja2>=3.1.6" regex build
 ( cd vllm-jetspec && VLLM_USE_PRECOMPILED=1 uv pip install -e . --no-build-isolation )
 # install the rest of the locked set, minus the absolute-path editable vllm line (installed above)
 grep -v 'vllm-jetspec' repo/requirements.lock.txt > /tmp/req.fresh.txt
