@@ -72,6 +72,17 @@ capable) · system nvcc 12.1 · 2× EPYC 9555 · 1.5 TB RAM · Ubuntu 22.04. See
 
 Fork edits are captured in `patches/vllm-jetspec.local.patch` (set `moe_backend`; drop the toolkit-lib64 prepend).
 
+### Reproducible environment (pinned)
+Exact versions are locked in **`requirements.lock.txt`** (`uv pip freeze`, 189 pkgs) and **`STACK_LOCK.md`**
+(toolchain, CUDA 12.9.1, vLLM base commit `551b3fb`, model HF revisions). Rebuild from the lock, not the
+ad-hoc `cycle/` commands:
+```bash
+uv venv --python 3.12 .venv && source .venv/bin/activate
+uv pip install torch==2.10.0 torchvision==0.25.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cu128
+VLLM_USE_PRECOMPILED=1 uv pip install -e vllm-jetspec --no-build-isolation
+uv pip install -r requirements.lock.txt
+```
+
 ## How to run
 ```bash
 # Throughput / acceptance (MATH-500, tuned harness):
