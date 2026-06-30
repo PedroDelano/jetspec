@@ -41,8 +41,15 @@ if mode == "dflash":
         "tree_attn_kernel": "triton", "tree_kv_layout": "logical", "num_cudagraph_tree_captures": 4,
         "max_model_len": 4096}
 
+import time
 llm = LLM(**kw)
+# warm one short request so timing reflects steady-state, not first-call capture
+llm.generate(prompts[:1], SamplingParams(temperature=0.0, max_tokens=8))
+t0 = time.perf_counter()
 outs = llm.generate(prompts, SamplingParams(temperature=0.0, max_tokens=1024))
+elapsed = time.perf_counter() - t0
+tot_out = sum(len(o.outputs[0].token_ids) for o in outs)
+tps = tot_out / elapsed if elapsed > 0 else 0.0
 
 def pred_of(text):
     m = re.findall(r"\\boxed\{([^}]*)\}", text)
@@ -66,8 +73,8 @@ for o, g in zip(outs, golds):
 
 acc = correct / len(golds)
 label = mode if mode == "ar" else f"dflash_tw{TREE_WIDTH}"
-row = f"{label},{MNS},{N},{acc:.4f},{correct},{gibberish}"
-print(f"\n===== RESULT mode={label} max_num_seqs={MNS} n={N}: accuracy={acc:.4f} ({correct}/{N}), gibberish_outputs={gibberish}")
-with open("/workspace/jetspec-v2/gsm8k_results.csv", "a") as f:
+row = f"{label},{MNS},{N},{acc:.4f},{correct},{gibberish},{tps:.2f},{tot_out},{elapsed:.2f}"
+print(f"\n===== RESULT mode={label} max_num_seqs={MNS} n={N}: accuracy={acc:.4f} ({correct}/{N}), gibberish={gibberish}, tok/s={tps:.2f}")
+with open("/workspace/jetspec-v2/gsm8k_compare.csv", "a") as f:
     f.write(row + "\n")
 json.dump(preds, open(f"/workspace/jetspec-v2/gsm8k_{label}_mns{MNS}.json", "w"), indent=2)

@@ -37,6 +37,18 @@ DFlash. JetSpec tree mode is only safe at batch=1 (single-stream) on this setup.
 
 Artifacts: gsm8k_results.csv, gsm8k_{dflash,dflash_tw1,ar}_mns*.json (per-problem gold/pred/gibberish).
 
+## 3-way comparison (gsm8k_acc.py adds tok/s; gsm8k_compare.csv)
+CAVEAT: this simple LLM.generate harness does NOT graph the draft head / tree cudagraph like the
+tuned dflash_profiling harness, so its **tok/s understates spec-decode throughput** (batch-1 is
+host-launch-bound per the README). Accuracy here is valid; for authoritative speedup use the
+MATH-500 tuned harness (AR 146 → JetSpec-tree 267 tok/s = 1.83×).
+| config | batch | acc | tok/s (this harness, NOT graph-opt) |
+|---|---|---|---|
+| AR baseline | 1 | 0.8375 | 153.8 |
+| DFlash-linear (tw1) | 1 | 0.8500 | 159.6 (~1.0×) |
+| JetSpec-tree (tw7) | 1 | 0.8250 (1 gibberish) | 150.6 |
+| (batch 8 row pending) | | | |
+
 **AR@16 = 85% / 0 gibberish — identical to JetSpec@batch1.** → The model, vLLM batching, and
 multiprocessing are correct in batch. The accuracy collapse is **JetSpec-tree-specific**, not a
 general batching issue.
@@ -46,3 +58,19 @@ with gibberish outputs appearing only at batch>1. Confirmed it IS JetSpec (metho
 no separate "jetspec" method exists in the fork — tree_width>1 engages JetSpec's parallel tree drafting).
 Pending: AR@16 (is the model/batching fine? expect ~85%) and linear DFlash tw1@{8,16} (is the bug
 tree-specific or general dflash batching?).
+
+## FINAL 3-way comparison (GSM8K, N=80, multiprocessing on)
+tok/s here is NOT graph-optimized (understates batch-1 spec speed; see MATH-500 for tuned: JetSpec 1.83×).
+Speedup = tok/s vs AR at the SAME batch.
+| config | batch | accuracy | gibberish | tok/s | speedup |
+|---|---|---|---|---|---|
+| AR baseline        | 1 | 0.838 | 0  | 153.8 | 1.00× |
+| DFlash-linear (tw1)| 1 | 0.850 | 0  | 159.6 | 1.04× |
+| JetSpec-tree (tw7) | 1 | 0.825 | 1  | 150.6 | 0.98× |
+| AR baseline        | 8 | 0.788 | 0  | 431.4 | 1.00× |
+| DFlash-linear (tw1)| 8 | 0.838 | 0  | 651.5 | 1.51× |
+| JetSpec-tree (tw7) | 8 | 0.138 | 13 | 750.4 | 1.74× (GARBAGE) |
+
+**Takeaway:** DFlash-linear is batch-safe (accuracy holds 85→84%, speedup GROWS with batch to 1.51×).
+JetSpec-tree has the highest raw tok/s but its batch-8 output is garbage (14% acc) — the speedup is
+meaningless. JetSpec-tree only usable at batch=1 (where MATH-500 tuned harness shows its real 1.83×).
