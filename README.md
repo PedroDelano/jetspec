@@ -13,6 +13,7 @@ Target model: **`Qwen/Qwen3-30B-A3B`** (MoE, 30B total / 3B active) + draft head
 > - JetSpec's tree drafting **reproduces faithfully**: MATH-500 acceptance length **8.7–9.7** (paper 9.56), lossless.
 > - **Single-stream speedup ≈ 1.83×** (budget 128) — not the paper's 9.64×, capped by sm_120 kernel maturity (no SM90 tree-attn kernel; CUTLASS MoE on sm_120 uses sm80-fallback tactics; MoE verify heavier than the paper's dense 8B).
 > - ⚠️ **JetSpec tree drafting is broken at batch > 1**: GSM8K accuracy collapses 85% → ~10–16% with gibberish. The **linear DFlash** drafter and the **AR** baseline stay correct in batch. JetSpec tree is only safe single-stream.
+> - ✅ **Reproducible from scratch** (verified): `bash setup_fresh.sh <dir>` in a brand-new folder — `git clone` → build from the lock → verify `.so` → smoke-test — passed clean (JetSpec generated `42` for 6×7). Build on **local disk**, not the `/workspace` NFS mount.
 
 ## Results
 
