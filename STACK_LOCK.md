@@ -19,9 +19,15 @@ in `cycle/`.
   uv venv --python 3.12 .venv && source .venv/bin/activate
   uv pip install torch==2.10.0 torchvision==0.25.0 torchaudio==2.11.0 \
       --index-url https://download.pytorch.org/whl/cu128
+  uv pip install "setuptools>=77,<81" setuptools-scm wheel packaging cmake ninja jinja2 regex build
   VLLM_USE_PRECOMPILED=1 uv pip install -e vllm-jetspec --no-build-isolation
-  uv pip install -r requirements.lock.txt        # pins everything else exactly
+  uv pip install --no-deps -r requirements.lock.txt   # exact versions; --no-deps: it's a full freeze
   ```
+  `--no-deps` is required: the freeze is a complete list but internally inconsistent for uv's resolver
+  (`cuda-python==13.3.1` wants `cuda-bindings>=13.3.1`, env pins `12.9.4`; harmless at runtime).
+  The turnkey path is **`bash setup_fresh.sh <dir>`** (handles all of this + verifies `.so` + smoke-tests).
+  Build on **local disk** (e.g. `/root`), not the `/workspace` NFS mount, which intermittently throws
+  `Stale file handle` during package extraction.
 - Headline pins: `torch==2.10.0+cu128`, `torchvision==0.25.0+cu128`, `torchaudio==2.11.0+cu128`,
   `transformers==4.57.6`, `flashinfer-python==0.6.7`, `triton==3.6.0`, `datasets==5.0.0`,
   `openai==2.44.0`, `numpy==2.2.6`, `tokenizers==0.22.2`, `pydantic==2.13.4`,

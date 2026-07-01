@@ -76,11 +76,16 @@ Fork edits are captured in `patches/vllm-jetspec.local.patch` (set `moe_backend`
 Exact versions are locked in **`requirements.lock.txt`** (`uv pip freeze`, 189 pkgs) and **`STACK_LOCK.md`**
 (toolchain, CUDA 12.9.1, vLLM base commit `551b3fb`, model HF revisions). Rebuild from the lock, not the
 ad-hoc `cycle/` commands:
+**Turnkey:** `bash setup_fresh.sh <fresh-dir> [models-src]` clones the repo + `vllm-jetspec`, builds the
+venv from the lock, verifies/repairs the precompiled `.so`, links weights, and smoke-tests. **Build on
+local disk (e.g. `/root`), not the `/workspace` NFS mount** (NFS intermittently corrupts pip extraction).
+Manual equivalent:
 ```bash
 uv venv --python 3.12 .venv && source .venv/bin/activate
 uv pip install torch==2.10.0 torchvision==0.25.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cu128
+uv pip install "setuptools>=77,<81" setuptools-scm wheel packaging cmake ninja jinja2 regex build
 VLLM_USE_PRECOMPILED=1 uv pip install -e vllm-jetspec --no-build-isolation
-uv pip install -r requirements.lock.txt
+uv pip install --no-deps -r requirements.lock.txt   # --no-deps: install the full freeze verbatim
 ```
 
 ## How to run
